@@ -1127,6 +1127,15 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [callInitiator, setCallInitiator] = useState<"user" | "character">("user");
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
+    useEffect(() => {
+        const refreshAvatars = () => {
+            setCharacter(loadCharacters().find(c => c.id === session.contactId) || null);
+            setUserIdentity(resolveUserIdentity(session.contactId, "chat"));
+        };
+        window.addEventListener("chat-avatar-updated", refreshAvatars);
+        return () => window.removeEventListener("chat-avatar-updated", refreshAvatars);
+    }, [session.contactId]);
+
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
 
     // Rich media input modals

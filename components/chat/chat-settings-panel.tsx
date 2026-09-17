@@ -1,5 +1,6 @@
 "use client";
 
+import { ChatPersonalizationSettings } from "./chat-personalization-settings";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
@@ -1152,6 +1153,8 @@ export function ChatSettingsPanel({
                         </button>
                     </>
                 </div>
+
+                <ChatPersonalizationSettings session={session} />
 
                 {/* Backgrounds & UI */}
                 <div className="menu-group">

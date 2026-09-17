@@ -49,6 +49,8 @@ export function splitStreamPreviewSegments(text: string): string[] {
 export function cleanStreamText(raw: string, options?: { stripXmlTags?: readonly string[]; stripLiterals?: readonly string[] }): string {
     if (!raw) return "";
     let text = raw;
+    text = text.replace(/<avatar-choice\b[^>]*>[\s\S]*?<\/avatar-choice>/g, "");
+    text = text.replace(/<avatar-choice\b[\s\S]*$/g, "");
     if (options?.stripXmlTags?.length) text = stripXmlTagBlocks(text, options.stripXmlTags);
     if (options?.stripLiterals?.length) text = stripLiteralTexts(text, options.stripLiterals);
     // 成对富媒体块整块剥掉
