@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallSounds } from "./use-call-sounds";
+import { useCallBackground } from "./use-call-background";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
@@ -77,6 +79,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const [callState, setCallState] = useState<CallState>("CONNECTING");
+    useCallSounds(session.id, callState, initiator);
     const hasConnectedRef = useRef(false);
     const [callDuration, setCallDuration] = useState(0);
     const [subtitles, setSubtitles] = useState<SubtitleEntry[]>([]);
@@ -84,7 +87,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [isMuted, setIsMuted] = useState(false);
     const [inputMode, setInputMode] = useState<"voice" | "text">(() => androidTextInputOnly ? "text" : "voice");
     const [typedText, setTypedText] = useState("");
-    const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
+    const bgImageResolved = useCallBackground(session.id, "voiceBackground", session.voiceBackground);
     const [showSttWarning, setShowSttWarning] = useState(false);
 
     const sttRef = useRef<STTSession | null>(null);
@@ -166,22 +169,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Resolve voiceBackground from IndexedDB ──────
 
-    useEffect(() => {
-        if (!session.voiceBackground) {
-            setBgImageResolved(null);
-            return;
-        }
-        if (session.voiceBackground.startsWith("data:") || session.voiceBackground.startsWith("http")) {
-            setBgImageResolved(session.voiceBackground);
-            return;
-        }
-        // IndexedDB ID
-        import("@/lib/chat-asset-storage").then(({ getChatImageFromIndexedDB }) => {
-            getChatImageFromIndexedDB(session.voiceBackground!).then(dataUrl => {
-                if (dataUrl) setBgImageResolved(dataUrl);
-            });
-        });
-    }, [session.voiceBackground]);
+
 
     // ── Call timer ───────────────────────────────────
 

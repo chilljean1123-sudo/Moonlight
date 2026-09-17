@@ -1179,7 +1179,13 @@ export function loadUserIdentities(): UserIdentity[] {
 
 export function saveUserIdentities(identities: UserIdentity[]): void {
     if (typeof window === "undefined") return;
+    const previous = loadUserIdentities();
     kvSet(USER_IDENTITIES_KEY, JSON.stringify(identities));
+    const changed = identities.filter(identity => identity.avatarUrl && previous.some(old => old.id === identity.id && old.avatarUrl !== identity.avatarUrl));
+    if (changed.length) window.dispatchEvent(new Event("chat-avatar-updated"));
+    if (changed.length) void import("./chat-avatar").then(({ notifyAvatarChange }) => {
+        for (const identity of changed) notifyAvatarChange(identity.id, identity.avatarUrl!);
+    });
 }
 
 /**

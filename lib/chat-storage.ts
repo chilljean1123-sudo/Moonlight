@@ -46,6 +46,9 @@ export type ChatSession = {
     alias?: string;
     videoBackground?: string;
     voiceBackground?: string;
+    sounds?: import("./chat-sounds").SoundSettings;
+    avatarReaction?: boolean;
+    suggestedAvatar?: string;
     isBlacklisted?: boolean;
     customCSS?: string;
     isMuted?: boolean;
@@ -1194,6 +1197,14 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
 
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(CHAT_MESSAGE_PUSHED_EVENT, { detail: { message: newMsg } }));
+    }
+    if ((newMsg.role === "user" || newMsg.role === "assistant") && !isSystemInstructionMessage(newMsg)) {
+        const session = _sessionsCache.find(s => s.id === newMsg.sessionId);
+        if (!session?.isMuted && !newMsg.mediaType?.includes("call")) {
+            void import("./chat-sounds").then(({ playChatSound, isCallSoundActive }) => {
+                if (!isCallSoundActive(newMsg.sessionId)) playChatSound(newMsg.role === "user" ? "send" : "receive", session?.sounds);
+            });
+        }
     }
     emitChatPluginEvent("message.persisted", { message: newMsg });
 

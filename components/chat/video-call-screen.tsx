@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallSounds } from "./use-call-sounds";
+import { useCallBackground } from "./use-call-background";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
@@ -76,6 +78,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const [callState, setCallState] = useState<CallState>("CONNECTING");
+    useCallSounds(session.id, callState, initiator);
     const hasConnectedRef = useRef(false);
     const [callDuration, setCallDuration] = useState(0);
     const [subtitles, setSubtitles] = useState<SubtitleEntry[]>([]);
@@ -84,7 +87,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
     const [inputMode, setInputMode] = useState<"voice" | "text">(() => androidTextInputOnly ? "text" : "voice");
     const [typedText, setTypedText] = useState("");
-    const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
+    const bgImageResolved = useCallBackground(session.id, "videoBackground", session.videoBackground);
     const [cameraEnabled, setCameraEnabled] = useState(false);
     const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("user");
     const [cameraError, setCameraError] = useState<string | null>(null);
@@ -265,21 +268,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Resolve videoBackground from IndexedDB ──────
 
-    useEffect(() => {
-        if (!session.videoBackground) {
-            setBgImageResolved(null);
-            return;
-        }
-        if (session.videoBackground.startsWith("data:") || session.videoBackground.startsWith("http")) {
-            setBgImageResolved(session.videoBackground);
-            return;
-        }
-        import("@/lib/chat-asset-storage").then(({ getChatImageFromIndexedDB }) => {
-            getChatImageFromIndexedDB(session.videoBackground!).then(dataUrl => {
-                if (dataUrl) setBgImageResolved(dataUrl);
-            });
-        });
-    }, [session.videoBackground]);
+
 
     // ── Call timer ───────────────────────────────────
 
@@ -695,9 +684,9 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                             <span className="ts-60 text-[var(--c-icon)]">{userNameRef.current?.[0] || "?"}</span>
                         </div>
                     )
-                ) : character.avatar ? (
+                ) : (bgImageResolved || character.avatar) ? (
                     <img
-                        src={character.avatar}
+                        src={bgImageResolved || character.avatar || ""}
                         alt={character.name}
                         className="w-full h-full object-cover transition-opacity duration-500 ease-in-out"
                         style={{
@@ -720,8 +709,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 title="点击切换大小画面"
             >
                 {pipSwapped ? (
-                    character.avatar ? (
-                        <img src={character.avatar} alt={character.name} className="w-full h-full object-cover" />
+                    (bgImageResolved || character.avatar) ? (
+                        <img src={bgImageResolved || character.avatar || ""} alt={character.name} className="w-full h-full object-cover" />
                     ) : (
                         <span className="ts-18 text-[var(--c-icon)]">{character.name?.[0] || "?"}</span>
                     )

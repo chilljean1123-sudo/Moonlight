@@ -1,5 +1,6 @@
 // lib/chat-engine.ts
 
+import { avatarPrompt, applyAvatarChoice } from "./chat-avatar";
 import { createSseJsonParser } from "./sse-json";
 import { maybeAppendShortcutCapability } from "./offline-shortcut-capability";
 import { loadCharacters } from "./character-storage";
@@ -1879,7 +1880,7 @@ export async function buildChatPromptMessages(
         hint: buildChatPluginPromptFragments(session.id),
     });
     const pluginPromptHint = pluginPrompt.hint?.trim() ? `\n\n### 扩展插件\n${pluginPrompt.hint.trim()}\n` : "";
-    const customAppRichMediaDirectives = formatCustomAppChatDirectivesForPrompt() + buildScreenEffectPromptHint() + pluginPromptHint;
+    const customAppRichMediaDirectives = formatCustomAppChatDirectivesForPrompt() + buildScreenEffectPromptHint() + pluginPromptHint + avatarPrompt(session.id);
     const toolsPrompt = toolsEnabled && !usesNativeActions ? formatToolsForPrompt(enabledTools) : "";
     const chatBilingualInstruction = !session.isGroup
         ? buildChatBilingualInstruction(session.bilingualTranslationEnabled !== false, "single", session.bilingualTranslationPrompt)
@@ -2199,7 +2200,7 @@ async function generateNativeChatCompletion(
         // 剔除预设配置的文本片段（<思考结束> 等残留标签）
         displayContent = stripPresetTexts(displayContent, preset);
 
-        const { cleanText: afterActionStrip, actions } = parseActionTags(displayContent);
+        const { cleanText: afterActionStrip, actions } = parseActionTags(await applyAvatarChoice(displayContent, session.id));
         if (actions.length > 0) {
             throwIfAborted(options?.signal);
             dispatchActions(actions, actionContext).catch(err => console.warn("[ChatEngine] Action dispatch failed:", err));
@@ -2644,7 +2645,7 @@ async function generateChatCompletionCore(
         filteredOutput = stripPresetTexts(filteredOutput, preset);
 
         // Parse actions (朋友圈 etc) — strip from display text but keep tool tags
-        const { cleanText: afterActionStrip, actions } = parseActionTags(filteredOutput);
+        const { cleanText: afterActionStrip, actions } = parseActionTags(await applyAvatarChoice(filteredOutput, session.id));
         if (actions.length > 0) {
             throwIfAborted(options?.signal);
             dispatchActions(actions, actionContext).catch(err => console.warn("[ChatEngine] Action dispatch failed:", err));
@@ -2853,7 +2854,7 @@ async function generateChatCompletionCore(
                         finalOutput = stripOnlineThinkingTag(finalOutput, onlineThinking.tag);
                     }
                     // 剔除预设配置的文本片段（<思考结束> 等残留标签）
-                    finalOutput = stripPresetTexts(finalOutput, preset);
+                    finalOutput = await applyAvatarChoice(stripPresetTexts(finalOutput, preset), session.id);
                     await callbacks?.onTextPart?.(finalOutput);
                     parts.push({ text: finalOutput });
                     if (bailoutRef.shortcutHandles.length > 0) bailoutRef.shortcutCompleted = true;
