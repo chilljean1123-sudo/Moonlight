@@ -7225,3 +7225,14 @@
   background: currentColor;
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
+
+/* Shell-owned call surface: hidden chat pages cannot hide or clip it. */
+.persistent-video-call-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+}
+.persistent-video-call-layer > * {
+  pointer-events: auto;
+}

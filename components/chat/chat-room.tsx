@@ -37,7 +37,7 @@ import { CustomAppForegroundBoundary } from "@/components/app-market/custom-app-
 
 import { ChatSettingsPanel } from "./chat-settings-panel";
 import { VoiceCallScreen } from "./voice-call-screen";
-import { VideoCallScreen } from "./video-call-screen";
+import { PersistentVideoCall } from "./persistent-video-call";
 import { GroupCallScreen } from "./group-call-screen";
 import { TransferTargetModal } from "./transfer-target-modal";
 import { GiftPickerModal } from "./gift-picker-modal";
@@ -6751,13 +6751,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 />
             )}
             {showVideoCall && character && (
-                <VideoCallScreen
+                <PersistentVideoCall
                     session={session}
                     character={character}
                     initiator={callInitiator}
-                    minimized={callMinimized}
-                    onMinimize={() => setCallMinimized(true)}
-                    onRestore={() => setCallMinimized(false)}
+                    onBusy={() => setShowVideoCall(false)}
                     onEnd={() => returnFromCall(() => setShowVideoCall(false))}
                 />
             )}
