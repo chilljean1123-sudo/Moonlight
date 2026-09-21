@@ -193,13 +193,22 @@ function normalizeFishAudioSpeed(speed: number | undefined): number | undefined 
     return Math.min(FISHAUDIO_SPEED_MAX, Math.max(FISHAUDIO_SPEED_MIN, speed));
 }
 
-// HTTP 请求头只能装 ISO-8859-1(Latin-1,\u0000-ÿ)字节——「语音模型」手动输入框
-// 一旦被打成中文/全角字符或粘进了不可见字符，浏览器 fetch 会直接抛
-// "String contains non ISO-8859-1 code point" 这种看不懂的原生错误。这里提前
-// 校验，换成能看懂的提示。
+// 手机中文输入法打模型 ID(如 "s2.1-pro-free")时,句点/连字符常被自动转成看起来
+// 一模一样、实际是全角的字符(U+FF01-FF5E,以及全角空格 U+3000)。这类字符肉眼
+// 分辨不出来,但字节超出 Latin-1,请求头一放进去浏览器 fetch 就直接抛
+// "String contains non ISO-8859-1 code point"——这里先把全角标点/空格悄悄转回
+// 半角,而不是让用户去猜哪个字符打错了。
+function normalizeFullwidthAscii(value: string): string {
+    return value.replace(/[！-～]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+        .replace(/　/g, " ");
+}
+
+// 转换后仍可能剩下真正的中文/表情等无法放进请求头的字符——这里兜底校验，
+// 换成能看懂的提示，而不是让浏览器原生错误漏出来。
 function assertHeaderSafe(value: string, label: string): string {
-    if (/^[\u0000-ÿ]*$/.test(value)) return value;
-    throw new Error(`${label}里有无法放进请求头的字符（比如中文/全角符号），请改成英文/数字，例如 s1`);
+    const normalized = normalizeFullwidthAscii(value);
+    if (/^[\u0000-ÿ]*$/.test(normalized)) return normalized;
+    throw new Error(`${label}里有无法放进请求头的字符（比如中文），请改成英文/数字，例如 s1`);
 }
 
 async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promise<Blob | null> {
@@ -209,6 +218,9 @@ async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promis
     const speed = normalizeFishAudioSpeed(config.speechSpeed);
     const apiKey = assertHeaderSafe(config.apiKey.trim(), "Fish Audio API Key");
     const model = assertHeaderSafe((config.model || "s1").trim() || "s1", "语音模型 (Model)");
+    // reference_id 不进请求头(不会崩),但同样常被输入法转全角——转错了不会报错,
+    // 只会静默拿不到那个音色,所以这里也顺手转回半角。
+    const referenceId = config.defaultVoice ? normalizeFullwidthAscii(config.defaultVoice.trim()) : "";
 
     const response = await fetchWithTimeout(`${baseUrl}/v1/tts`, {
         method: "POST",
@@ -223,7 +235,7 @@ async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promis
             mp3_bitrate: 128,
             normalize: true,
             latency: "normal",
-            ...(config.defaultVoice ? { reference_id: config.defaultVoice } : {}),
+            ...(referenceId ? { reference_id: referenceId } : {}),
             ...(speed !== undefined ? { prosody: { speed } } : {}),
         }),
     });

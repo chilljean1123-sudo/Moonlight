@@ -37,6 +37,9 @@ const DEFAULT_FISHAUDIO_BASE_URL = "https://api.fish.audio";
 // https://docs.fish.audio — model 通过请求头 `model` 选择，官方模型仍在迭代，
 // 列不全的可以切到「手动输入」。
 const FISHAUDIO_MODELS = [
+    { id: "s2.1-pro-free", name: "s2.1-pro-free（免费）" },
+    { id: "s2.1-pro", name: "s2.1-pro" },
+    { id: "s2-pro", name: "s2-pro（最具表现力）" },
     { id: "s1", name: "s1（长文本更稳）" },
     { id: "s1-mini", name: "s1-mini" },
     { id: "speech-1.6", name: "speech-1.6" },
@@ -339,7 +342,7 @@ export function VoiceSettings() {
             updateConfig(id, {
                 provider: "FishAudio",
                 baseUrl: DEFAULT_FISHAUDIO_BASE_URL,
-                model: wasFishAudio ? (current?.model || "s1") : "s1",
+                model: wasFishAudio ? (current?.model || "s2.1-pro-free") : "s2.1-pro-free",
                 defaultVoice: wasFishAudio ? (current?.defaultVoice || "") : "",
                 speechSpeed: wasFishAudio ? (current?.speechSpeed ?? DEFAULT_SPEECH_SPEED) : DEFAULT_SPEECH_SPEED,
             });
