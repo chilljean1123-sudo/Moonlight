@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 
-const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI"]);
+const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI", "FishAudio"]);
 const MINIMAX_BASE_URL_OPTIONS = [
     { id: "cn", label: "国内版", baseUrl: "https://api.minimaxi.com/v1" },
     { id: "global", label: "海外版", baseUrl: "https://api.minimax.io/v1" },
@@ -30,7 +30,22 @@ const VOICE_PROVIDER_OPTIONS = [
     { value: "OpenAI", label: "OpenAI TTS" },
     { value: "MinimaxCN", label: "Minimax 语音国内版" },
     { value: "MinimaxGlobal", label: "Minimax 语音海外版" },
+    { value: "FishAudio", label: "Fish Audio" },
 ];
+
+const DEFAULT_FISHAUDIO_BASE_URL = "https://api.fish.audio";
+// https://docs.fish.audio — model 通过请求头 `model` 选择，官方模型仍在迭代，
+// 列不全的可以切到「手动输入」。
+const FISHAUDIO_MODELS = [
+    { id: "s1", name: "s1（长文本更稳）" },
+    { id: "s1-mini", name: "s1-mini" },
+    { id: "speech-1.6", name: "speech-1.6" },
+    { id: "speech-1.5", name: "speech-1.5" },
+    { id: "agent-x0", name: "agent-x0" },
+];
+const FISHAUDIO_SPEED_MIN = 0.5;
+const FISHAUDIO_SPEED_MAX = 2.0;
+const FISHAUDIO_SPEED_STEP = 0.1;
 
 const DEFAULT_VOICE_CONFIGS: VoiceApiConfig[] = [
     {
@@ -182,7 +197,10 @@ function uniqueOptions(options: VoiceOption[]): VoiceOption[] {
 }
 
 function defaultVoiceOptions(provider: string): VoiceOption[] {
-    return provider === "OpenAI" ? DEFAULT_OPENAI_VOICES : DEFAULT_MINIMAX_VOICES;
+    if (provider === "OpenAI") return DEFAULT_OPENAI_VOICES;
+    // Fish Audio 音色都是账号自建/克隆出来的，没有固定枚举——靠「同步音色列表」拉取。
+    if (provider === "FishAudio") return [];
+    return DEFAULT_MINIMAX_VOICES;
 }
 
 function voiceOptionsForConfig(config: VoiceApiConfig, fetchedVoices: Record<string, VoiceOption[]>): VoiceOption[] {
@@ -222,6 +240,7 @@ function makeCloneVoiceId(config: VoiceApiConfig): string {
 
 function providerSelectValue(config: VoiceApiConfig): string {
     if (config.provider === "OpenAI") return "OpenAI";
+    if (config.provider === "FishAudio") return "FishAudio";
     return config.baseUrl === GLOBAL_MINIMAX_BASE_URL ? "MinimaxGlobal" : "MinimaxCN";
 }
 
@@ -315,6 +334,20 @@ export function VoiceSettings() {
             setManualVoiceIds(prev => ({ ...prev, [id]: false }));
             return;
         }
+        if (providerOption === "FishAudio") {
+            const wasFishAudio = current?.provider === "FishAudio";
+            updateConfig(id, {
+                provider: "FishAudio",
+                baseUrl: DEFAULT_FISHAUDIO_BASE_URL,
+                model: wasFishAudio ? (current?.model || "s1") : "s1",
+                defaultVoice: wasFishAudio ? (current?.defaultVoice || "") : "",
+                speechSpeed: wasFishAudio ? (current?.speechSpeed ?? DEFAULT_SPEECH_SPEED) : DEFAULT_SPEECH_SPEED,
+            });
+            setManualModelIds(prev => ({ ...prev, [id]: false }));
+            // 没有固定音色枚举，默认给一个可手动填 reference_id 的输入框。
+            setManualVoiceIds(prev => ({ ...prev, [id]: !wasFishAudio ? true : (prev[id] ?? true) }));
+            return;
+        }
         const wasMinimax = current?.provider === "Minimax";
         updateConfig(id, {
             provider: "Minimax",
@@ -373,12 +406,18 @@ export function VoiceSettings() {
         const config = configs.find(c => c.id === cloneTargetId);
         if (!config) return;
         setCloneError("");
-        const voiceId = cloneVoiceId.trim();
+        const isFishAudio = config.provider === "FishAudio";
+        const label = cloneVoiceId.trim();
         if (!config.apiKey.trim()) {
-            setCloneError("请先填写 Minimax API Key");
+            setCloneError(isFishAudio ? "请先填写 Fish Audio API Key" : "请先填写 Minimax API Key");
             return;
         }
-        if (!voiceId || !/^[A-Za-z0-9_-]{4,64}$/.test(voiceId)) {
+        if (isFishAudio) {
+            if (!label) {
+                setCloneError("请填写音色标题");
+                return;
+            }
+        } else if (!label || !/^[A-Za-z0-9_-]{4,64}$/.test(label)) {
             setCloneError("Voice ID 只能包含英文、数字、下划线和连字符，长度 4-64");
             return;
         }
@@ -394,59 +433,89 @@ export function VoiceSettings() {
 
         setIsCloning(true);
         try {
-            // 浏览器直连 MiniMax(和 TTS 同路),不走服务端中转:
-            // 避开 Netlify 函数 ~6MB 请求体和 10s 超时限制,本地 dev 也不依赖出网代理。
-            const base = (config.baseUrl || DEFAULT_MINIMAX_BASE_URL).replace(/\/$/, "");
-            const auth = { Authorization: `Bearer ${config.apiKey.trim()}` };
-            const readBaseRespError = (payload: Record<string, unknown> | null): string | null => {
-                const baseResp = (payload?.base_resp ?? {}) as Record<string, unknown>;
-                const code = baseResp.status_code ?? payload?.status_code;
-                const message = String(baseResp.status_msg || payload?.status_msg || "");
-                if (typeof code === "number" && code !== 0) return message || `status_code=${code}`;
-                if (typeof code === "string" && code && code !== "0") return message || `status_code=${code}`;
-                return null;
-            };
             const parseJson = (text: string): Record<string, unknown> | null => {
                 try { return JSON.parse(text) as Record<string, unknown>; } catch { return null; }
             };
 
-            // 1) 上传克隆样本
-            const uploadForm = new FormData();
-            uploadForm.set("purpose", "voice_clone");
-            uploadForm.set("file", cloneFile, cloneFile.name || "voice-sample.mp3");
-            const uploadResponse = await fetch(`${base}/files/upload`, { method: "POST", headers: auth, body: uploadForm });
-            const uploadText = await uploadResponse.text();
-            const uploadData = parseJson(uploadText);
-            const uploadError = readBaseRespError(uploadData);
-            if (!uploadResponse.ok || uploadError) {
-                throw new Error(uploadError || `样本上传失败 (HTTP ${uploadResponse.status}) ${uploadText.slice(0, 200)}`);
-            }
-            const fileRecord = (uploadData?.file ?? {}) as Record<string, unknown>;
-            const fileId = fileRecord.file_id ?? uploadData?.file_id ?? uploadData?.id;
-            if (fileId === undefined || fileId === null || fileId === "") {
-                throw new Error(`上传结果里没有 file_id: ${uploadText.slice(0, 200)}`);
+            let clonedVoice: VoiceOption;
+
+            if (isFishAudio) {
+                // 浏览器直连 Fish Audio(和 TTS 同路),理由同 Minimax:避开服务端函数的
+                // 请求体大小与超时限制。训练是异步的(created/training/trained/failed),
+                // 这里先按 fast 模式提交,进度靠「同步音色列表」刷新查看。
+                const base = (config.baseUrl || DEFAULT_FISHAUDIO_BASE_URL).replace(/\/$/, "");
+                const form = new FormData();
+                form.set("type", "tts");
+                form.set("visibility", "private");
+                form.set("train_mode", "fast");
+                form.set("title", label);
+                form.set("enhance_audio_quality", "true");
+                form.append("voices", cloneFile, cloneFile.name || "voice-sample.mp3");
+                const response = await fetch(`${base}/model`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${config.apiKey.trim()}` },
+                    body: form,
+                });
+                const text = await response.text();
+                const data = parseJson(text);
+                if (!response.ok || !data) {
+                    throw new Error(String(data?.message || data?.detail || text || `创建失败 (HTTP ${response.status})`).slice(0, 300));
+                }
+                const id = (data._id ?? data.id) as string | undefined;
+                if (!id) throw new Error(`创建结果里没有音色 ID: ${text.slice(0, 200)}`);
+                const state = typeof data.state === "string" ? data.state : "";
+                const stateSuffix = state === "training" || state === "created"
+                    ? "（训练中，稍后点「同步音色列表」查看进度）"
+                    : "";
+                clonedVoice = { id, name: `${label}${stateSuffix}`, createdAt: Date.now() };
+            } else {
+                // 浏览器直连 MiniMax(和 TTS 同路),不走服务端中转:
+                // 避开 Netlify 函数 ~6MB 请求体和 10s 超时限制,本地 dev 也不依赖出网代理。
+                const base = (config.baseUrl || DEFAULT_MINIMAX_BASE_URL).replace(/\/$/, "");
+                const auth = { Authorization: `Bearer ${config.apiKey.trim()}` };
+                const readBaseRespError = (payload: Record<string, unknown> | null): string | null => {
+                    const baseResp = (payload?.base_resp ?? {}) as Record<string, unknown>;
+                    const code = baseResp.status_code ?? payload?.status_code;
+                    const message = String(baseResp.status_msg || payload?.status_msg || "");
+                    if (typeof code === "number" && code !== 0) return message || `status_code=${code}`;
+                    if (typeof code === "string" && code && code !== "0") return message || `status_code=${code}`;
+                    return null;
+                };
+
+                // 1) 上传克隆样本
+                const uploadForm = new FormData();
+                uploadForm.set("purpose", "voice_clone");
+                uploadForm.set("file", cloneFile, cloneFile.name || "voice-sample.mp3");
+                const uploadResponse = await fetch(`${base}/files/upload`, { method: "POST", headers: auth, body: uploadForm });
+                const uploadText = await uploadResponse.text();
+                const uploadData = parseJson(uploadText);
+                const uploadError = readBaseRespError(uploadData);
+                if (!uploadResponse.ok || uploadError) {
+                    throw new Error(uploadError || `样本上传失败 (HTTP ${uploadResponse.status}) ${uploadText.slice(0, 200)}`);
+                }
+                const fileRecord = (uploadData?.file ?? {}) as Record<string, unknown>;
+                const fileId = fileRecord.file_id ?? uploadData?.file_id ?? uploadData?.id;
+                if (fileId === undefined || fileId === null || fileId === "") {
+                    throw new Error(`上传结果里没有 file_id: ${uploadText.slice(0, 200)}`);
+                }
+
+                // 2) 发起克隆
+                const cloneResponse = await fetch(`${base}/voice_clone`, {
+                    method: "POST",
+                    headers: { ...auth, "Content-Type": "application/json" },
+                    body: JSON.stringify({ file_id: fileId, voice_id: label }),
+                });
+                const cloneText = await cloneResponse.text();
+                const cloneData = parseJson(cloneText);
+                const cloneRespError = readBaseRespError(cloneData);
+                if (!cloneResponse.ok || cloneRespError) {
+                    throw new Error(cloneRespError || `克隆失败 (HTTP ${cloneResponse.status}) ${cloneText.slice(0, 200)}`);
+                }
+                clonedVoice = { id: label, name: `克隆音色 (${label})`, createdAt: Date.now() };
             }
 
-            // 2) 发起克隆
-            const cloneResponse = await fetch(`${base}/voice_clone`, {
-                method: "POST",
-                headers: { ...auth, "Content-Type": "application/json" },
-                body: JSON.stringify({ file_id: fileId, voice_id: voiceId }),
-            });
-            const cloneText = await cloneResponse.text();
-            const cloneData = parseJson(cloneText);
-            const cloneRespError = readBaseRespError(cloneData);
-            if (!cloneResponse.ok || cloneRespError) {
-                throw new Error(cloneRespError || `克隆失败 (HTTP ${cloneResponse.status}) ${cloneText.slice(0, 200)}`);
-            }
-            const nextVoiceId = voiceId;
-            const clonedVoice: VoiceOption = {
-                id: nextVoiceId,
-                name: `克隆音色 (${nextVoiceId})`,
-                createdAt: Date.now(),
-            };
             updateConfig(config.id, {
-                defaultVoice: nextVoiceId,
+                defaultVoice: clonedVoice.id,
                 customVoices: uniqueOptions([clonedVoice, ...(config.customVoices || [])]),
             });
             setFetchedVoices(prev => {
@@ -499,6 +568,29 @@ export function VoiceSettings() {
 
             } else if (config.provider === "OpenAI") {
                 setFetchedVoices(prev => ({ ...prev, [config.id]: DEFAULT_OPENAI_VOICES }));
+            } else if (config.provider === "FishAudio") {
+                if (!config.apiKey.trim()) {
+                    setFetchedVoices(prev => ({ ...prev, [config.id]: config.customVoices || [] }));
+                    setFetchError(prev => ({ ...prev, [config.id]: "填写 API Key 后可同步账户已创建的音色" }));
+                    return;
+                }
+                const response = await fetch("/api/voice/fishaudio-voices", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        apiKey: config.apiKey,
+                        baseUrl: config.baseUrl || DEFAULT_FISHAUDIO_BASE_URL,
+                    }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.message || data.error || `同步失败 (${response.status})`);
+                }
+                const remoteVoices = Array.isArray(data.voices) ? data.voices as VoiceOption[] : [];
+                const nextCustomVoices = uniqueOptions([...remoteVoices, ...(config.customVoices || [])]);
+                updateConfig(config.id, { customVoices: nextCustomVoices });
+                setFetchedVoices(prev => ({ ...prev, [config.id]: nextCustomVoices }));
+                if (nextCustomVoices.length > 0) setManualVoiceIds(prev => ({ ...prev, [config.id]: false }));
             } else {
                 throw new Error("该服务商暂不支持拉取模型列表");
             }
@@ -841,6 +933,83 @@ export function VoiceSettings() {
                                             </>
                                         )}
 
+                                        {config.provider === "FishAudio" && (
+                                            <>
+                                                <div className="flex flex-col gap-1">
+                                                    <label className="menu-desc ml-1">接口地址 (Base URL)</label>
+                                                    <Input
+                                                        type="text"
+                                                        value={config.baseUrl || ""}
+                                                        onChange={(e) => updateConfig(config.id, { baseUrl: e.target.value })}
+                                                        placeholder={DEFAULT_FISHAUDIO_BASE_URL}
+                                                    />
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                    <div className="flex items-center justify-between px-1">
+                                                        <label className="menu-desc">语速 (Speed)</label>
+                                                        <span className="menu-label font-medium">{(config.speechSpeed ?? DEFAULT_SPEECH_SPEED).toFixed(1)}×</span>
+                                                    </div>
+                                                    <input
+                                                        type="range"
+                                                        min={FISHAUDIO_SPEED_MIN}
+                                                        max={FISHAUDIO_SPEED_MAX}
+                                                        step={FISHAUDIO_SPEED_STEP}
+                                                        value={config.speechSpeed ?? DEFAULT_SPEECH_SPEED}
+                                                        onChange={(e) => updateConfig(config.id, { speechSpeed: Number(e.target.value) })}
+                                                        className="w-full accent-black"
+                                                        aria-label="Fish Audio 语速"
+                                                    />
+                                                    <div className="relative h-4 px-1 text-xs text-gray-500" aria-hidden="true">
+                                                        <span className="absolute left-1 whitespace-nowrap">{FISHAUDIO_SPEED_MIN.toFixed(1)}×</span>
+                                                        <span className="absolute whitespace-nowrap" style={{ left: "33.333%", transform: "translateX(-50%)" }}>1.0× 默认</span>
+                                                        <span className="absolute right-1 whitespace-nowrap">{FISHAUDIO_SPEED_MAX.toFixed(1)}×</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                    <label className="menu-desc ml-1">语音模型 (Model / Backend)</label>
+                                                    <div className="flex flex-col gap-2">
+                                                        {manualModelIds[config.id] ? (
+                                                            <div className="flex gap-2">
+                                                                <Input
+                                                                    type="text"
+                                                                    value={config.model || ""}
+                                                                    onChange={(e) => updateConfig(config.id, { model: e.target.value })}
+                                                                    placeholder="手动输入模型 ID，如 s1"
+                                                                    className="flex-1"
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setManualModelIds(prev => ({ ...prev, [config.id]: false }))}
+                                                                    className="ui-icon-btn"
+                                                                    aria-label="返回模型下拉选择"
+                                                                    title="返回模型下拉选择"
+                                                                >
+                                                                    <List size={20} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <select
+                                                                value={FISHAUDIO_MODELS.some(m => m.id === config.model) ? config.model : "__manual__"}
+                                                                onChange={(e) => {
+                                                                    if (e.target.value === "__manual__") {
+                                                                        setManualModelIds(prev => ({ ...prev, [config.id]: true }));
+                                                                        return;
+                                                                    }
+                                                                    updateConfig(config.id, { model: e.target.value });
+                                                                }}
+                                                                className="ui-select"
+                                                            >
+                                                                {FISHAUDIO_MODELS.map(model => (
+                                                                    <option key={model.id} value={model.id}>{model.name}</option>
+                                                                ))}
+                                                                <option value="__manual__">手动输入...</option>
+                                                            </select>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+
                                         <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">默认音色 (Default Voice) 或 自定义 Voice ID</label>
                                             <div className="flex flex-col gap-2">
@@ -851,7 +1020,13 @@ export function VoiceSettings() {
                                                                 type="text"
                                                                 value={config.defaultVoice}
                                                                 onChange={(e) => updateConfig(config.id, { defaultVoice: e.target.value })}
-                                                                placeholder={config.provider === "OpenAI" ? "alloy" : "male-qn-qingse 或克隆 Voice ID"}
+                                                                placeholder={
+                                                                    config.provider === "OpenAI"
+                                                                        ? "alloy"
+                                                                        : config.provider === "FishAudio"
+                                                                            ? "reference_id，留空则用模型默认音色"
+                                                                            : "male-qn-qingse 或克隆 Voice ID"
+                                                                }
                                                                 className="flex-1"
                                                             />
                                                             <button
@@ -903,16 +1078,20 @@ export function VoiceSettings() {
                                                         className="ui-btn ui-btn ui-btn-soft-action w-full"
                                                     >
                                                         <RefreshCw size={16} className={isFetching[config.id] ? "animate-spin" : ""} />
-                                                        {isFetching[config.id] ? "同步中..." : config.provider === "Minimax" ? "同步音色列表" : "显示默认音色"}
+                                                        {isFetching[config.id]
+                                                            ? "同步中..."
+                                                            : (config.provider === "Minimax" || config.provider === "FishAudio")
+                                                                ? "同步音色列表"
+                                                                : "显示默认音色"}
                                                     </button>
-                                                    {config.provider === "Minimax" && (
+                                                    {(config.provider === "Minimax" || config.provider === "FishAudio") && (
                                                         <button
                                                             onClick={() => openCloneModal(config)}
                                                             disabled={!config.apiKey.trim()}
                                                             className="ui-btn ui-btn-soft-action w-full"
                                                         >
                                                             <Upload size={16} />
-                                                            上传音频克隆音色
+                                                            {config.provider === "FishAudio" ? "上传音频创建音色" : "上传音频克隆音色"}
                                                         </button>
                                                     )}
                                                 </div>
@@ -946,19 +1125,19 @@ export function VoiceSettings() {
                         <div className="modal-expand" data-ui="modal-dialog" style={{ width: "min(420px, calc(100% - 32px))", maxHeight: "82%" }}>
                             <div className="modal-header" data-ui="modal-header">
                                 <button onClick={closeCloneModal} disabled={isCloning} className="modal-header-btn modal-header-btn-muted"><X size={18} /></button>
-                                <span className="modal-header-title">克隆 Minimax 音色</span>
+                                <span className="modal-header-title">{config.provider === "FishAudio" ? "创建 Fish Audio 音色" : "克隆 Minimax 音色"}</span>
                                 <button onClick={submitClone} disabled={isCloning} className="modal-header-btn modal-header-btn-action"><Check size={18} /></button>
                             </div>
 
                             <div className="modal-body hide-scrollbar" data-ui="modal-body">
                                 <div className="flex flex-col gap-4">
                                     <div className="flex flex-col gap-1">
-                                        <label className="menu-desc ml-1">新 Voice ID</label>
+                                        <label className="menu-desc ml-1">{config.provider === "FishAudio" ? "音色标题" : "新 Voice ID"}</label>
                                         <Input
                                             type="text"
                                             value={cloneVoiceId}
                                             onChange={(e) => setCloneVoiceId(e.target.value)}
-                                            placeholder="例如 voice_xxx"
+                                            placeholder={config.provider === "FishAudio" ? "例如 我的音色" : "例如 voice_xxx"}
                                             disabled={isCloning}
                                         />
                                     </div>
@@ -972,9 +1151,13 @@ export function VoiceSettings() {
                                             className="ui-input"
                                         />
                                         <span className="menu-desc ml-1">建议上传 10-30 秒、声音清晰、背景噪音少的音频。</span>
-                                        <span className="ml-1 text-xs font-medium text-red-500">
-                                            克隆音色初次使用将会扣除 9.9 元 Minimax token 费用（包含试听）。
-                                        </span>
+                                        {config.provider === "FishAudio" ? (
+                                            <span className="menu-desc ml-1">创建后音色会异步训练，完成前可先点「同步音色列表」查看进度。</span>
+                                        ) : (
+                                            <span className="ml-1 text-xs font-medium text-red-500">
+                                                克隆音色初次使用将会扣除 9.9 元 Minimax token 费用（包含试听）。
+                                            </span>
+                                        )}
                                     </div>
 
                                     {cloneError && (
