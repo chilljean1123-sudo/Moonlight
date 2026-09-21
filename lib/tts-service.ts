@@ -25,6 +25,7 @@ export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): V
  * Supported providers:
  * - Minimax: REST API → hex-encoded mp3
  * - OpenAI: REST API → binary audio blob
+ * - Fish Audio: REST API (POST /v1/tts) → binary audio blob
  */
 export async function synthesizeSpeech(
     text: string,
@@ -41,6 +42,10 @@ export async function synthesizeSpeech(
 
     if (provider === "OpenAI") {
         return synthesizeOpenAI(text, voiceConfig);
+    }
+
+    if (provider === "FishAudio") {
+        return synthesizeFishAudio(text, voiceConfig);
     }
 
     return null;
@@ -168,6 +173,53 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
     if (!response.ok) {
         const errText = await response.text().catch(() => "");
         throw new Error(`OpenAI TTS 请求失败 (${response.status}): ${errText}`);
+    }
+
+    const blob = await response.blob();
+    return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+// ── Fish Audio TTS ──────────────────────────────────
+// https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech
+// POST /v1/tts, JSON body, model/backend picked via the `model` header,
+// reference_id selects a cloned/created voice (omit for the backend's own voice).
+// Response is a raw audio stream (not JSON), same as OpenAI's endpoint.
+
+const FISHAUDIO_SPEED_MIN = 0.5;
+const FISHAUDIO_SPEED_MAX = 2.0;
+
+function normalizeFishAudioSpeed(speed: number | undefined): number | undefined {
+    if (typeof speed !== "number" || !Number.isFinite(speed)) return undefined;
+    return Math.min(FISHAUDIO_SPEED_MAX, Math.max(FISHAUDIO_SPEED_MIN, speed));
+}
+
+async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("Fish Audio API Key 未配置");
+
+    const baseUrl = (config.baseUrl || "https://api.fish.audio").replace(/\/$/, "");
+    const speed = normalizeFishAudioSpeed(config.speechSpeed);
+
+    const response = await fetchWithTimeout(`${baseUrl}/v1/tts`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            "Content-Type": "application/json",
+            model: config.model || "s1",
+        },
+        body: JSON.stringify({
+            text,
+            format: "mp3",
+            mp3_bitrate: 128,
+            normalize: true,
+            latency: "normal",
+            ...(config.defaultVoice ? { reference_id: config.defaultVoice } : {}),
+            ...(speed !== undefined ? { prosody: { speed } } : {}),
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`Fish Audio TTS 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
 
     const blob = await response.blob();
