@@ -275,11 +275,11 @@ export function installServerOutboxConsumer(): void {
 
     // 启动时保留 5 分钟节流；回前台和 SW 明确告知新消息时强制补拉。
     // iOS 会在后台冻结页面，如果回前台仍被节流，屏幕速聊消息只能等到下次重启才会合并。
-    const requestConsume = (force = false) => {
+    const requestConsume = (force = false, silent?: boolean) => {
         if (consumeRequestTimer !== null) window.clearTimeout(consumeRequestTimer);
         consumeRequestTimer = window.setTimeout(() => {
             consumeRequestTimer = null;
-            void consumeServerOutbox({ force });
+            void consumeServerOutbox({ force, ...(silent !== undefined ? { silent } : {}) });
         }, 150);
     };
 
@@ -289,7 +289,11 @@ export function installServerOutboxConsumer(): void {
     });
     navigator.serviceWorker?.addEventListener("message", (event) => {
         if (event.data?.type === "push_outbox_ready") {
-            requestConsume(true);
+            // SW 收到 chat_outbox 推送时，若当前页面可见就不会弹系统通知（避免双重提醒），
+            // 指望页面自己补一份横幅+系统弹窗；页面此时若仍保持静默合并，用户就完全收不到
+            // 任何提示。只有在页面确实可见时才带 silent:false，让下面这次合并负责提醒；
+            // 页面不可见时维持原有静默（此时系统通知已经弹过，不重复）。
+            requestConsume(true, document.hidden ? undefined : false);
             return;
         }
         if (event.data?.type === "run_shortcut" && typeof event.data.url === "string") {
