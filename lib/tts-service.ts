@@ -193,18 +193,29 @@ function normalizeFishAudioSpeed(speed: number | undefined): number | undefined 
     return Math.min(FISHAUDIO_SPEED_MAX, Math.max(FISHAUDIO_SPEED_MIN, speed));
 }
 
+// HTTP 请求头只能装 ISO-8859-1(Latin-1,\u0000-ÿ)字节——「语音模型」手动输入框
+// 一旦被打成中文/全角字符或粘进了不可见字符，浏览器 fetch 会直接抛
+// "String contains non ISO-8859-1 code point" 这种看不懂的原生错误。这里提前
+// 校验，换成能看懂的提示。
+function assertHeaderSafe(value: string, label: string): string {
+    if (/^[\u0000-ÿ]*$/.test(value)) return value;
+    throw new Error(`${label}里有无法放进请求头的字符（比如中文/全角符号），请改成英文/数字，例如 s1`);
+}
+
 async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promise<Blob | null> {
     if (!config.apiKey) throw new Error("Fish Audio API Key 未配置");
 
     const baseUrl = (config.baseUrl || "https://api.fish.audio").replace(/\/$/, "");
     const speed = normalizeFishAudioSpeed(config.speechSpeed);
+    const apiKey = assertHeaderSafe(config.apiKey.trim(), "Fish Audio API Key");
+    const model = assertHeaderSafe((config.model || "s1").trim() || "s1", "语音模型 (Model)");
 
     const response = await fetchWithTimeout(`${baseUrl}/v1/tts`, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${config.apiKey}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-            model: config.model || "s1",
+            model,
         },
         body: JSON.stringify({
             text,
