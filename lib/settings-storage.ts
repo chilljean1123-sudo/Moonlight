@@ -1177,13 +1177,19 @@ export function loadUserIdentities(): UserIdentity[] {
     }
 }
 
-export function saveUserIdentities(identities: UserIdentity[]): void {
+/**
+ * `options.silent`：跳过"角色对用户换头像做出反应"这条自动链路
+ * （`notifyAvatarChange` → 推一条假的用户消息 + 让角色回复）。
+ * 角色自己主动帮用户换头像时要传 true——不然会显得"用户刚换了头像，角色自己却在反应"，
+ * 因果颠倒。
+ */
+export function saveUserIdentities(identities: UserIdentity[], options?: { silent?: boolean }): void {
     if (typeof window === "undefined") return;
     const previous = loadUserIdentities();
     kvSet(USER_IDENTITIES_KEY, JSON.stringify(identities));
     const changed = identities.filter(identity => identity.avatarUrl && previous.some(old => old.id === identity.id && old.avatarUrl !== identity.avatarUrl));
     if (changed.length) window.dispatchEvent(new Event("chat-avatar-updated"));
-    if (changed.length) void import("./chat-avatar").then(({ notifyAvatarChange }) => {
+    if (changed.length && options?.silent !== true) void import("./chat-avatar").then(({ notifyAvatarChange }) => {
         for (const identity of changed) notifyAvatarChange(identity.id, identity.avatarUrl!);
     });
 }

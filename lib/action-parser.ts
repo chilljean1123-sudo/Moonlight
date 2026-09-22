@@ -12,14 +12,17 @@ import {
     getVisiblePosts,
     loadMomentsConfig,
 } from "./moments-storage";
-import { loadChatContacts, loadChatSessions, loadChatMessages, createOrGetSession, addChatContact } from "./chat-storage";
+import { loadChatContacts, loadChatSessions, loadChatMessages, createOrGetSession, addChatContact, pushChatMessage } from "./chat-storage";
+import type { ChatMessage } from "./chat-storage";
 import { parseAndSaveResponse } from "./follow-up-service";
-import { loadCharacters } from "./character-storage";
+import { loadCharacters, saveCharacters } from "./character-storage";
 import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "./friend-request-storage";
 import { sendBrowserNotification } from "./browser-notification";
 import type { MomentPost, MomentComment } from "./moments-types";
 import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
+import { loadUserIdentities, saveUserIdentities, resolveUserIdentity } from "./settings-storage";
+import { isMediaStoreRef, loadMediaBlob } from "./media-cache-storage";
 
 // ── Types ──
 
@@ -40,7 +43,7 @@ export type ActionContext = {
 
 // ── Parser ──
 
-const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信"] as const;
+const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信", "换头像"] as const;
 
 function normalizeActionQuotes(text: string): string {
     return text.replace(/[\u201C\u201D\u2018\u2019\u300C\u300D]/g, "\"");
@@ -140,6 +143,7 @@ function collectActionBlocks(text: string, requireClosingTag: boolean): {
  *   [消息]内容[/消息]                          — single-person
  *   ["角色名"私信]内容[/私信]                  — group (actor)
  *   [群消息 "群名"]内容[/群消息]                — cross-context
+ *   [换头像 "自己"/"对方"]关键词（可选）[/换头像] — 用聊天里最近一张图片换头像
  */
 export function parseActionTags(text: string): {
     cleanText: string;
@@ -178,7 +182,7 @@ export function parseActionTags(text: string): {
  */
 const KNOWN_ACTION_TAGS = [
     // 中文方括号格式
-    "朋友圈", "评论", "回复", "消息", "群消息", "私信",
+    "朋友圈", "评论", "回复", "消息", "群消息", "私信", "换头像",
     // XML 格式 (AI 偶尔幻觉输出)
     "action_chat_message", "action_moments_post",
     "action_comment", "action_reply",
@@ -246,6 +250,9 @@ export async function dispatchActions(
                     break;
                 case "群消息":
                     await dispatchGroupChatMessage(action, effectiveCtx);
+                    break;
+                case "换头像":
+                    await dispatchAvatarChange(action, effectiveCtx);
                     break;
             }
         } catch (err) {
@@ -453,6 +460,91 @@ async function dispatchGroupChatMessage(action: ActionTag, context: ActionContex
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: groupSession.id } }));
     }
+}
+
+async function dispatchAvatarChange(action: ActionTag, context: ActionContext): Promise<void> {
+    const targetsSelf = (action.target || "").includes("自己");
+
+    let sessionId = context.sessionId;
+    if (!sessionId) {
+        ensureCharacterChatContact(context.characterId);
+        sessionId = createOrGetSession(context.characterId).id;
+    }
+
+    const url = await pickAvatarSourceImage(sessionId, action.content);
+    if (!url) {
+        console.warn("[ActionParser] 换头像: no usable image found in this chat");
+        return;
+    }
+
+    const chars = loadCharacters();
+    const character = chars.find(c => c.id === context.characterId);
+    if (targetsSelf) {
+        if (!character || character.avatar === url) return;
+        saveCharacters(chars.map(c => c.id === character.id ? { ...c, avatar: url } : c));
+        pushChatMessage({ sessionId, role: "system", content: `${character.name}更换了头像` });
+    } else {
+        const identity = resolveUserIdentity(context.characterId, "chat");
+        if (!identity || identity.avatarUrl === url) return;
+        // silent: 这是角色主动帮用户换的，不能再触发"用户换头像→角色反应"的自动链路，
+        // 不然会显得角色在对自己刚做的事做出反应，因果颠倒。
+        saveUserIdentities(
+            loadUserIdentities().map(i => i.id === identity.id ? { ...i, avatarUrl: url } : i),
+            { silent: true },
+        );
+        pushChatMessage({ sessionId, role: "system", content: `${character?.name || "对方"}帮你更换了头像` });
+    }
+
+    window.dispatchEvent(new Event("chat-avatar-updated"));
+    console.log(`[ActionParser] Avatar changed (${targetsSelf ? "self" : "user"}) from ${context.sourceEngine} engine`);
+}
+
+function isChatImageMessage(msg: ChatMessage): boolean {
+    if (!msg.mediaUrl) return false;
+    if (msg.mediaType === "image") return true;
+    if (msg.mediaType === "media_file" && msg.mediaData?.fileType === "image") return true;
+    return false;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error || new Error("read failed"));
+        reader.readAsDataURL(blob);
+    });
+}
+
+/** message.mediaUrl 可能是 data: URL、外部 URL，或指向压缩缓存的 media-store:// 引用——
+ *  头像字段要求持久可用的 data:/外部 URL，media-store:// 引用要先落回 data URL。 */
+async function resolveChatImageUrl(mediaUrl: string): Promise<string | null> {
+    if (!isMediaStoreRef(mediaUrl)) return mediaUrl;
+    const result = await loadMediaBlob(mediaUrl);
+    if (!result) return null;
+    try {
+        return await blobToDataUrl(result.blob);
+    } catch {
+        return null;
+    }
+}
+
+/** 挑一张聊天里出现过的图片来当头像：keywordHint 命中某张图的描述就优先用它，
+ *  否则用最近的一张（不区分是用户发的还是角色发的）。 */
+async function pickAvatarSourceImage(sessionId: string, keywordHint?: string): Promise<string | null> {
+    const images = loadChatMessages(sessionId).filter(isChatImageMessage);
+    if (images.length === 0) return null;
+
+    const keyword = keywordHint?.trim();
+    if (keyword) {
+        const lookback = Math.max(0, images.length - 30);
+        for (let i = images.length - 1; i >= lookback; i -= 1) {
+            const label = images[i].mediaData?.label?.trim();
+            if (label && (label.includes(keyword) || keyword.includes(label))) {
+                return resolveChatImageUrl(images[i].mediaUrl!);
+            }
+        }
+    }
+    return resolveChatImageUrl(images[images.length - 1].mediaUrl!);
 }
 
 // ── Content Matching Helpers ──
