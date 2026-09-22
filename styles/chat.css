@@ -5099,6 +5099,19 @@
   opacity: 0.7;
   background: color-mix(in srgb, var(--c-success) 50%, transparent);
 }
+.call-subtitle[data-playable] {
+  cursor: pointer;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
+}
+.call-subtitle[data-playable]:active {
+  opacity: 0.72;
+}
+.call-subtitle[data-audio-status="loading"] {
+  opacity: 0.55;
+}
+.call-subtitle[data-audio-status="playing"] {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--c-success) 65%, transparent) inset;
+}
 
 .call-text-input-panel {
   z-index: 14;
