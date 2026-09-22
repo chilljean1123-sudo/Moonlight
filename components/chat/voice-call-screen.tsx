@@ -92,6 +92,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     const sttRef = useRef<STTSession | null>(null);
     const audioAbortRef = useRef<(() => void) | null>(null);
+    // 点击气泡重放：按 subtitle id 缓存已合成的音频，同一条不用重新合成/重新计费。
+    const subtitleAudioRef = useRef<Map<string, Blob>>(new Map());
+    const [subtitleAudioStatus, setSubtitleAudioStatus] = useState<{ id: string; status: "loading" | "playing" } | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const callStartRef = useRef<number>(0);
     const pausedAtRef = useRef<number | null>(null);
@@ -388,10 +391,14 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     if (stateRef.current === "ENDED") return;
 
                     if (audioBlob) {
+                        // 缓存下来，点这条气泡重放时不用再合成一次。
+                        subtitleAudioRef.current.set(subtitleId, audioBlob);
                         const { promise, abort } = playCallAudio(audioBlob);
                         audioAbortRef.current = abort;
                         await promise;
-                        audioAbortRef.current = null;
+                        // 比对后再清空：点别的气泡重放时会打断这段播放并抢占
+                        // audioAbortRef，此时这里不能把它已经指向的新 abort 清掉。
+                        if (audioAbortRef.current === abort) audioAbortRef.current = null;
                     }
                 } catch (e) {
                     console.warn("[VoiceCall] TTS failed:", e);
@@ -413,6 +420,56 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             }
         }
     }, [session, processAIResponse, playCallAudio]);
+
+    // ── 点击字幕气泡重放语音（不再只是干巴巴的文字）──
+
+    const playSubtitleAudio = useCallback(async (sub: SubtitleEntry) => {
+        if (sub.role !== "assistant") return;
+        if (stateRef.current === "ENDED" || stateRef.current === "CONNECTING" || stateRef.current === "PROCESSING") return;
+
+        // 再点一下正在播的那条：停止播放。
+        if (subtitleAudioStatus?.id === sub.id && subtitleAudioStatus.status === "playing") {
+            audioAbortRef.current?.();
+            audioAbortRef.current = null;
+            setSubtitleAudioStatus(null);
+            if (stateRef.current !== "ENDED") setCallState("IDLE");
+            return;
+        }
+        if (subtitleAudioStatus?.status === "loading") return; // 上一次合成还没完成，别叠加请求
+
+        // 打断当前在播的东西（新一轮自动播报，或另一条正在重放的气泡）和正在监听的麦克风——
+        // 和缩小悬浮窗/挂断时的兜底同一套逻辑，避免重放音频被当成用户说话识别进去。
+        if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
+        audioAbortRef.current?.();
+        audioAbortRef.current = null;
+        setInterimText("");
+
+        let blob = subtitleAudioRef.current.get(sub.id);
+        if (!blob) {
+            setSubtitleAudioStatus({ id: sub.id, status: "loading" });
+            const voiceConfig = resolveVoiceConfig(session.contactId);
+            if (!voiceConfig) { setSubtitleAudioStatus(null); return; }
+            try {
+                const synthesized = await synthesizeSpeech(stripBilingualForSpeech(sub.text), voiceConfig);
+                if (stateRef.current === "ENDED" || !synthesized) { setSubtitleAudioStatus(null); return; }
+                blob = synthesized;
+                subtitleAudioRef.current.set(sub.id, blob);
+            } catch (e) {
+                console.warn("[VoiceCall] Replay TTS failed:", e);
+                setSubtitleAudioStatus(null);
+                return;
+            }
+        }
+
+        setCallState("AI_SPEAKING");
+        setSubtitleAudioStatus({ id: sub.id, status: "playing" });
+        const { promise, abort } = playCallAudio(blob);
+        audioAbortRef.current = abort;
+        await promise;
+        if (audioAbortRef.current === abort) audioAbortRef.current = null;
+        setSubtitleAudioStatus(prev => (prev?.id === sub.id ? null : prev));
+        if (stateRef.current !== "ENDED") setCallState("IDLE");
+    }, [playCallAudio, session.contactId, subtitleAudioStatus]);
 
     // ── Auto-listen: 进入 IDLE 自动开始监听 ────────
 
@@ -733,6 +790,20 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                             key={sub.id}
                             className="call-subtitle"
                             data-role={sub.role}
+                            {...(sub.role === "assistant" ? {
+                                "data-playable": "",
+                                ...(subtitleAudioStatus?.id === sub.id ? { "data-audio-status": subtitleAudioStatus.status } : {}),
+                                role: "button",
+                                tabIndex: 0,
+                                "aria-label": subtitleAudioStatus?.id === sub.id && subtitleAudioStatus.status === "playing" ? "停止播放语音" : "播放语音",
+                                onClick: () => playSubtitleAudio(sub),
+                                onKeyDown: (event: React.KeyboardEvent) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        playSubtitleAudio(sub);
+                                    }
+                                },
+                            } : {})}
                         >
                             <BilingualTextBlock text={sub.text} mode="plain" className="call-subtitle-bilingual" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
                         </div>
