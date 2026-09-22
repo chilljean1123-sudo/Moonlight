@@ -181,9 +181,10 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
 
 // ── Fish Audio TTS ──────────────────────────────────
 // https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech
-// POST /v1/tts, JSON body, model/backend picked via the `model` header,
-// reference_id selects a cloned/created voice (omit for the backend's own voice).
-// Response is a raw audio stream (not JSON), same as OpenAI's endpoint.
+// 走服务端代理（app/api/voice/fishaudio-tts）而不是浏览器直连：实测浏览器直连
+// POST /v1/tts 会被 CORS 拦下报 "Failed to fetch"（不像 Minimax/OpenAI 那两个
+// 端点对浏览器开了 CORS）。服务端出网没有 CORS 限制，"请求头塞进全角/中文字符
+// 会崩"这类校验也顺带挪到服务端统一兜底。
 
 const FISHAUDIO_SPEED_MIN = 0.5;
 const FISHAUDIO_SPEED_MAX = 2.0;
@@ -193,56 +194,26 @@ function normalizeFishAudioSpeed(speed: number | undefined): number | undefined 
     return Math.min(FISHAUDIO_SPEED_MAX, Math.max(FISHAUDIO_SPEED_MIN, speed));
 }
 
-// 手机中文输入法打模型 ID(如 "s2.1-pro-free")时,句点/连字符常被自动转成看起来
-// 一模一样、实际是全角的字符(U+FF01-FF5E,以及全角空格 U+3000)。这类字符肉眼
-// 分辨不出来,但字节超出 Latin-1,请求头一放进去浏览器 fetch 就直接抛
-// "String contains non ISO-8859-1 code point"——这里先把全角标点/空格悄悄转回
-// 半角,而不是让用户去猜哪个字符打错了。
-function normalizeFullwidthAscii(value: string): string {
-    return value.replace(/[！-～]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
-        .replace(/　/g, " ");
-}
-
-// 转换后仍可能剩下真正的中文/表情等无法放进请求头的字符——这里兜底校验，
-// 换成能看懂的提示，而不是让浏览器原生错误漏出来。
-function assertHeaderSafe(value: string, label: string): string {
-    const normalized = normalizeFullwidthAscii(value);
-    if (/^[\u0000-ÿ]*$/.test(normalized)) return normalized;
-    throw new Error(`${label}里有无法放进请求头的字符（比如中文），请改成英文/数字，例如 s1`);
-}
-
 async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promise<Blob | null> {
     if (!config.apiKey) throw new Error("Fish Audio API Key 未配置");
 
-    const baseUrl = (config.baseUrl || "https://api.fish.audio").replace(/\/$/, "");
     const speed = normalizeFishAudioSpeed(config.speechSpeed);
-    const apiKey = assertHeaderSafe(config.apiKey.trim(), "Fish Audio API Key");
-    const model = assertHeaderSafe((config.model || "s1").trim() || "s1", "语音模型 (Model)");
-    // reference_id 不进请求头(不会崩),但同样常被输入法转全角——转错了不会报错,
-    // 只会静默拿不到那个音色,所以这里也顺手转回半角。
-    const referenceId = config.defaultVoice ? normalizeFullwidthAscii(config.defaultVoice.trim()) : "";
-
-    const response = await fetchWithTimeout(`${baseUrl}/v1/tts`, {
+    const response = await fetchWithTimeout("/api/voice/fishaudio-tts", {
         method: "POST",
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            model,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl || "https://api.fish.audio",
+            model: config.model || "s1",
             text,
-            format: "mp3",
-            mp3_bitrate: 128,
-            normalize: true,
-            latency: "normal",
-            ...(referenceId ? { reference_id: referenceId } : {}),
-            ...(speed !== undefined ? { prosody: { speed } } : {}),
+            referenceId: config.defaultVoice || "",
+            ...(speed !== undefined ? { speed } : {}),
         }),
     });
 
     if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`Fish Audio TTS 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+        const data = await response.json().catch(() => ({} as { message?: string; error?: string }));
+        throw new Error(data.message || data.error || `Fish Audio TTS 请求失败 (${response.status})`);
     }
 
     const blob = await response.blob();

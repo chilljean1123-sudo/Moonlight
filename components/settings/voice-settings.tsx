@@ -443,28 +443,22 @@ export function VoiceSettings() {
             let clonedVoice: VoiceOption;
 
             if (isFishAudio) {
-                // 浏览器直连 Fish Audio(和 TTS 同路),理由同 Minimax:避开服务端函数的
-                // 请求体大小与超时限制。训练是异步的(created/training/trained/failed),
-                // 这里先按 fast 模式提交,进度靠「同步音色列表」刷新查看。
-                const base = (config.baseUrl || DEFAULT_FISHAUDIO_BASE_URL).replace(/\/$/, "");
+                // 走服务端代理(app/api/voice/fishaudio-clone),不像 Minimax 那样浏览器直连：
+                // 实测 Fish Audio 对浏览器没开 CORS，直连会被拦下报 "Failed to fetch"。
+                // 训练是异步的(created/training/trained/failed)，这里先按 fast 模式提交，
+                // 进度靠「同步音色列表」刷新查看。
                 const form = new FormData();
-                form.set("type", "tts");
-                form.set("visibility", "private");
-                form.set("train_mode", "fast");
+                form.set("apiKey", config.apiKey.trim());
+                form.set("baseUrl", config.baseUrl || DEFAULT_FISHAUDIO_BASE_URL);
                 form.set("title", label);
-                form.set("enhance_audio_quality", "true");
-                form.append("voices", cloneFile, cloneFile.name || "voice-sample.mp3");
-                const response = await fetch(`${base}/model`, {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${config.apiKey.trim()}` },
-                    body: form,
-                });
+                form.append("audio", cloneFile, cloneFile.name || "voice-sample.mp3");
+                const response = await fetch("/api/voice/fishaudio-clone", { method: "POST", body: form });
                 const text = await response.text();
                 const data = parseJson(text);
-                if (!response.ok || !data) {
-                    throw new Error(String(data?.message || data?.detail || text || `创建失败 (HTTP ${response.status})`).slice(0, 300));
+                if (!response.ok || !data?.ok) {
+                    throw new Error(String(data?.message || data?.error || text || `创建失败 (HTTP ${response.status})`).slice(0, 300));
                 }
-                const id = (data._id ?? data.id) as string | undefined;
+                const id = data.id as string | undefined;
                 if (!id) throw new Error(`创建结果里没有音色 ID: ${text.slice(0, 200)}`);
                 const state = typeof data.state === "string" ? data.state : "";
                 const stateSuffix = state === "training" || state === "created"
