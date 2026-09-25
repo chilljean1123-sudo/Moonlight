@@ -93,22 +93,43 @@ function expandUserPlaceholder(text: string, userName: string): string {
     return text.replace(/\{\{user\}\}/g, userName);
 }
 
-function extractHtmlAndSummary(raw: string): { html: string; summary: string } {
+/** 生成太长时可能在闭合 ```html 围栏前就被 max_tokens 截断——StoryHtmlRenderer
+ *  的正则要求有闭合围栏才会当成可交互页面渲染，缺了就整段退化成纯文本贴出来
+ *  （用户看到的就是一屏 <!DOCTYPE html> 源码）。这里补一个闭合围栏，保证不管
+ *  截没截断都走 iframe 渲染，而不是摆烂显示源码。 */
+function closeUnterminatedFence(contentPart: string): { html: string; wasClosed: boolean } {
+    const openMatch = /```html\s*\n/i.exec(contentPart);
+    if (!openMatch) return { html: contentPart, wasClosed: false };
+    const afterOpen = contentPart.slice(openMatch.index + openMatch[0].length);
+    if (afterOpen.includes("```")) return { html: contentPart, wasClosed: false };
+    return { html: `${contentPart}\n\`\`\``, wasClosed: true };
+}
+
+function extractHtmlAndSummary(raw: string): { html: string; summary: string; truncated: boolean } {
     const markerIndex = raw.indexOf("===SUMMARY===");
     const contentPart = (markerIndex >= 0 ? raw.slice(0, markerIndex) : raw).trim();
     const summaryPart = markerIndex >= 0 ? raw.slice(markerIndex + "===SUMMARY===".length).trim() : "";
+    // 没找到摘要标记：多半是没写到那一步就被截断了（正常生成一定会走到摘要）。
+    let truncated = markerIndex < 0;
 
     const hasFence = /```html/i.test(contentPart);
-    const html = hasFence ? contentPart : "```html\n" + contentPart + "\n```";
+    let html: string;
+    if (hasFence) {
+        const closed = closeUnterminatedFence(contentPart);
+        html = closed.html;
+        truncated = truncated || closed.wasClosed;
+    } else {
+        html = "```html\n" + contentPart + "\n```";
+    }
 
-    const fallbackSummary = contentPart
+    const fallbackSummary = html
         .replace(/```html[\s\S]*?```/gi, "")
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 80);
 
-    return { html, summary: (summaryPart || fallbackSummary || "点开查看小剧场内容").slice(0, 120) };
+    return { html, summary: (summaryPart || fallbackSummary || "点开查看小剧场内容").slice(0, 120), truncated };
 }
 
 export type GenerateTheaterInput = {
@@ -132,11 +153,14 @@ export async function generateTheaterEntry(input: GenerateTheaterInput): Promise
 
     const result = await simpleLLMCall(apiConfig, [{ role: "user", content: prompt }], {
         temperature: 0.9,
-        max_tokens: 8000,
+        // 论坛题材要求正文 ≥5000 字，算上标签/CSS 很容易过万 token；给足预算，
+        // 不然会在闭合 ```html 围栏前被截断（见 extractHtmlAndSummary 的兜底）。
+        max_tokens: 16000,
     });
     if (!result.content) throw new ChatEngineError(result.error || "小剧场生成失败，请重试。");
 
-    const { html, summary } = extractHtmlAndSummary(result.content);
+    const { html, summary, truncated: contentTruncated } = extractHtmlAndSummary(result.content);
+    const truncated = contentTruncated || result.wasTruncated === true;
     const wordCount = html.replace(/```html|```/gi, "").replace(/<[^>]+>/g, "").replace(/\s+/g, "").length;
 
     return addTheaterEntry({
@@ -150,5 +174,6 @@ export async function generateTheaterEntry(input: GenerateTheaterInput): Promise
         html,
         summary,
         wordCount,
+        truncated,
     });
 }
