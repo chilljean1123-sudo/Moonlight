@@ -111,7 +111,6 @@ export type ChatMessage = {
         | "payment_request" | "accept_payment_request" | "decline_payment_request"
         | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
-        | "theater_share"
         | "gift"
         | "contact_card"
         | "app_card"
@@ -200,10 +199,6 @@ export type ChatMessage = {
         xiaohongshuImageAssetId?: string;
         xiaohongshuCoverIcon?: string;
         xiaohongshuTone?: string;
-        theaterEntryId?: string;      // 小剧场分享：对应的剧场存放条目 id
-        theaterTitle?: string;        // 小剧场分享：标题
-        theaterGenreTitle?: string;   // 小剧场分享：题材名
-        theaterSummary?: string;      // 小剧场分享：摘要
         callDuration?: string;    // 通话时长（如 05:23）
         voiceDuration?: number;   // 语音条时长（秒）
         synthesizedFromText?: string; // 语音条当前音频对应的合成文本

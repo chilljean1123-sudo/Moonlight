@@ -30,5 +30,4 @@ export const CONTENT_APP_ACCENTS: Record<ContentAppId, string> = {
     group_chat: "#22C55E",
     vn: "#7C3AED",
     adventure: "#F97316",
-    theater: "#8b6f52",
 };
