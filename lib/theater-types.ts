@@ -45,8 +45,6 @@ export type TheaterEntry = {
     /** 简短摘要：用于剧场存放列表预览 + 分享卡片 + 角色能"看到"的上下文 */
     summary: string;
     wordCount: number;
-    /** 生成过程中疑似被 max_tokens 截断（缺摘要标记，或围栏是补上去闭合的）。 */
-    truncated?: boolean;
     createdAt: string;
     updatedAt: string;
 };
