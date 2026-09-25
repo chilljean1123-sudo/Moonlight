@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ChevronLeft, Share2, Trash2 } from "lucide-react";
+import { ChevronLeft, Share2, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
-import { Alert } from "@/components/ui/feedback";
 import { StoryHtmlRenderer } from "@/components/ui/story-html-renderer";
 import { removeTheaterEntry } from "@/lib/theater-storage";
 import type { TheaterEntry } from "@/lib/theater-types";
@@ -60,12 +59,6 @@ export function TheaterViewer({
                     {entry.characterName ? <span>· {entry.characterName}</span> : null}
                     <span>· {new Date(entry.createdAt).toLocaleString()}</span>
                 </div>
-                {entry.truncated && (
-                    <Alert variant="warning" className="theater-viewer-truncated-alert">
-                        <AlertTriangle size={14} />
-                        内容生成时可能被截断了，后面部分不一定完整，介意的话可以重新生成一次。
-                    </Alert>
-                )}
                 <StoryHtmlRenderer content={entry.html} messageId={entry.id} htmlPageMode="contained" />
             </div>
 

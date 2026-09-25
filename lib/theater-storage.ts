@@ -168,7 +168,6 @@ function normalizeEntry(raw: unknown): TheaterEntry | null {
         html: e.html,
         summary: typeof e.summary === "string" ? e.summary : "",
         wordCount: typeof e.wordCount === "number" ? e.wordCount : 0,
-        truncated: e.truncated === true,
         createdAt: typeof e.createdAt === "string" ? e.createdAt : new Date().toISOString(),
         updatedAt: typeof e.updatedAt === "string" ? e.updatedAt : new Date().toISOString(),
     };

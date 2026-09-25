@@ -292,13 +292,6 @@
   opacity: 0.6;
 }
 
-.theater-viewer-truncated-alert {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
 .theater-viewer-genre {
   display: inline-flex;
   padding: 2px 9px;
