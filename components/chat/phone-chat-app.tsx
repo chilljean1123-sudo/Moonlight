@@ -177,6 +177,19 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                         label: `${sharePayload.title} - ${sharePayload.artist}`,
                     },
                 });
+            } else if (sharePayload.type === "theater") {
+                pushChatMessage({
+                    sessionId: sess.id,
+                    role: "user",
+                    content: `分享了一个小剧场：${sharePayload.title}`,
+                    mediaType: "theater_share",
+                    mediaData: {
+                        theaterEntryId: sharePayload.entryId,
+                        theaterTitle: sharePayload.title,
+                        theaterGenreTitle: sharePayload.genreTitle,
+                        theaterSummary: sharePayload.summary,
+                    },
+                });
             } else {
                 const content = formatXiaohongshuShareForPrompt({
                     author: sharePayload.authorName,
