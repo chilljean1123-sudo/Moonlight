@@ -120,6 +120,8 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <MediaFileBubble msg={msg} onUpdate={onUpdate} characterId={characterId} />;
         case "xiaohongshu_note_share":
             return <XiaohongshuShareBubble msg={msg} />;
+        case "theater_share":
+            return <TheaterShareBubble msg={msg} />;
         case "audio":
             return <VoiceMessageBubble msg={msg} characterId={characterId} onUpdate={onUpdate} defaultTranslationExpanded={defaultTranslationExpanded} />;
         default: {
@@ -2251,6 +2253,33 @@ function XiaohongshuShareBubble({ msg }: { msg: ChatMessage }) {
                     {tags.slice(0, 3).map(tag => <span key={tag}>#{tag}</span>)}
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+function TheaterShareBubble({ msg }: { msg: ChatMessage }) {
+    const data = msg.mediaData;
+    const title = data?.theaterTitle || "小剧场";
+    const genreTitle = data?.theaterGenreTitle || "小剧场";
+    const summary = data?.theaterSummary || "";
+    const entryId = data?.theaterEntryId;
+    const openTheater = () => {
+        if (!entryId || typeof window === "undefined") return;
+        window.dispatchEvent(new CustomEvent("open-app", {
+            detail: { appId: "theater", theaterEntryId: entryId },
+        }));
+    };
+    return (
+        <div className="chat-app-card" data-disabled={entryId ? undefined : "true"} onClick={openTheater}>
+            <div className="chat-app-card-head">
+                <span className="chat-app-card-icon" aria-hidden>
+                    <Blocks size={18} strokeWidth={2} />
+                </span>
+                <span className="chat-app-card-name">小剧场</span>
+            </div>
+            <div className="chat-app-card-title">{title}</div>
+            <div className="chat-app-card-subtitle">{genreTitle}</div>
+            {summary ? <div className="chat-app-card-body">{summary}</div> : null}
         </div>
     );
 }

@@ -233,6 +233,54 @@ export function appendMissingCustomAppIcons(
   return next;
 }
 
+/**
+ * 给一批已知内置 app id 做"缺失就补到桌面空位"的一次性迁移，用于给已有存档的
+ * 老用户补上新上线的内置 app（自定义 app 见 appendMissingCustomAppIcons）。
+ * 调用方负责用 kv 标记只跑一次，避免用户手动把图标挪走/删掉后又被强制加回来。
+ */
+export function appendMissingBuiltinIcons(
+  layout: DesktopIconLayout,
+  iconIds: IconId[],
+  widgets: WidgetInstance[] = [],
+  dock: DesktopIconId[] = []
+): DesktopIconLayout {
+  const present = new Set<string>(dock);
+  for (const icon of getDesktopIconLayoutItems(layout)) {
+    present.add(icon.id);
+  }
+  const missing = iconIds.filter((id) => !present.has(id));
+  if (missing.length === 0) {
+    return layout;
+  }
+
+  const next = { ...layout } as DesktopIconLayout;
+  let index = 0;
+  for (let page = 1; index < missing.length && page <= 50; page++) {
+    const pageKey = getDesktopPageKey(page);
+    const icons = next[pageKey] ?? [];
+    const occupied = buildWidgetOccupancy(widgets, page);
+    for (const icon of icons) {
+      if (icon.row >= 1 && icon.row <= GRID_ROWS && icon.col >= 1 && icon.col <= GRID_COLS) {
+        occupied[icon.row - 1][icon.col - 1] = true;
+      }
+    }
+    const placed: IconPosition[] = [];
+    for (let row = 0; row < GRID_ROWS && index < missing.length; row++) {
+      for (let col = 0; col < GRID_COLS && index < missing.length; col++) {
+        if (occupied[row][col]) {
+          continue;
+        }
+        placed.push({ id: missing[index], row: row + 1, col: col + 1 });
+        index++;
+      }
+    }
+    if (placed.length > 0) {
+      next[pageKey] = [...icons, ...placed];
+    }
+  }
+  return next;
+}
+
 // ── Desktop folders ───────────────────────────────────
 // 文件夹内容表：folder:xxx → { name, icons }。tile 本身作为普通图标
 // 存在分页布局里；这张表只管"里面装了什么、叫什么"。
