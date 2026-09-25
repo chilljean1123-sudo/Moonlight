@@ -38,7 +38,6 @@ import { CheckPhoneApp } from "@/components/checkphone/checkphone-app";
 import { ShoppingApp } from "@/components/shopping/shopping-app";
 import { GameHubApp } from "@/components/game/game-hub-app";
 import { MixologyApp } from "@/components/mixology/mixology-app";
-import { TheaterApp } from "@/components/theater/theater-app";
 import InterviewMagazineApp from "@/components/interview/interview-magazine-app";
 import { CoCreateApp } from "@/components/cocreate/cocreate-app";
 import { AppMarketApp } from "@/components/app-market/app-market-app";
@@ -117,7 +116,6 @@ import {
   writeDockLayout,
   loadDesktopFolders,
   writeDesktopFolders,
-  appendMissingBuiltinIcons,
   DOCK_LAYOUT_STORAGE_KEY,
   DOCK_MAX,
   type DesktopFolderMap,
@@ -150,8 +148,6 @@ const EMOJI_FONTS = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", 
 
 const ICON_LAYOUT_STORAGE_KEY = "ai_phone_icon_layout_v2";
 const ICON_LAYOUT_STORAGE_KEY_V1 = "ai_phone_icon_layout_v1";
-// 一次性迁移标记：新上线的内置 app 图标补到老用户桌面上后写这个 key，避免重复补。
-const NEW_BUILTIN_ICONS_SEEDED_KEY = "ai_phone_new_builtin_icons_seeded_v1";
 // Sentinel "page" used by the drag engine to mean "the dock". getDesktopPageNumber
 // returns 0 for it and getDesktopPageKeys filters it out, so page iteration never
 // treats the dock as a real page.
@@ -1486,21 +1482,10 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       if (rawV2) {
         try {
           const normalized = normalizeLayout(JSON.parse(rawV2), hydratedWidgets, dockIds, hydratedFolders);
-          let sane = sanitizeDesktopFolders(hydratedFolders, normalized, hydratedDock, hydratedWidgets);
-          let changed = sane.changed;
-          // 新上线的内置 app：老存档里不会自带这个图标，补一次到桌面空位
-          // （只跑一次，用户之后手动删掉不会被这里重新加回来）。
-          if (!kvGet(NEW_BUILTIN_ICONS_SEEDED_KEY)) {
-            const seededLayout = appendMissingBuiltinIcons(sane.layout, ["theater"], hydratedWidgets, hydratedDock);
-            if (seededLayout !== sane.layout) {
-              sane = { ...sane, layout: seededLayout };
-              changed = true;
-            }
-            kvSet(NEW_BUILTIN_ICONS_SEEDED_KEY, "1");
-          }
+          const sane = sanitizeDesktopFolders(hydratedFolders, normalized, hydratedDock, hydratedWidgets);
           setFolders(sane.folders);
           setLayout(sane.layout);
-          if (changed) {
+          if (sane.changed) {
             writeDesktopFolders(sane.folders);
             kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(sane.layout));
           }
@@ -2390,7 +2375,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
   const [activeChatSession, setActiveChatSession] = useState<ChatSession | null>(null);
   const [customAppLaunchContext, setCustomAppLaunchContext] = useState<CustomAppLaunchState | null>(null);
   const [appMarketLaunchContext, setAppMarketLaunchContext] = useState<Record<string, unknown> | null>(null);
-  const [theaterOpenEntryId, setTheaterOpenEntryId] = useState<string | null>(null);
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -2418,7 +2402,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         if (detail.appId === "resources") {
           setResourcesInitialPage(detail.resourcePage === "vn_assets" || detail.resourcePage === "memory" ? detail.resourcePage : "main");
         }
-        setTheaterOpenEntryId(nextAppId === "theater" && typeof detail.theaterEntryId === "string" ? detail.theaterEntryId : null);
         setActiveApp(nextAppId as DesktopIconId);
         if (detail.sessionId) setChatInitSessionId(detail.sessionId);
         else setChatInitSessionId(null);
@@ -4110,16 +4093,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     if (activeApp === "mixology") {
       return <MixologyApp onClose={() => setActiveApp(null)} />;
-    }
-
-    if (activeApp === "theater") {
-      return (
-        <TheaterApp
-          onClose={() => setActiveApp(null)}
-          openEntryId={theaterOpenEntryId}
-          onOpenEntryConsumed={() => setTheaterOpenEntryId(null)}
-        />
-      );
     }
 
     if (activeApp === "appmarket") {

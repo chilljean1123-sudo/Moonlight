@@ -20,7 +20,7 @@ import { loadDiaryEntries } from "./diary-entry-storage";
 import type { DiaryEntry, DiaryEntryBlock } from "./diary-entry-types";
 import { loadNoteWallProjectionEntries } from "./notewall-memory";
 import { loadXiaohongshuProjectionEntries } from "./xiaohongshu-memory";
-import { formatTheaterShareForPrompt, formatXiaohongshuShareForPrompt } from "./chat-share";
+import { formatXiaohongshuShareForPrompt } from "./chat-share";
 import { loadBlackMarketTheaterProjectionEntries } from "./black-market-storage";
 import { loadInterviewMagazineProjectionEntries } from "./interview-magazine-memory";
 import { loadCoCreateProjectionEntries } from "./cocreate-memory";
@@ -256,11 +256,6 @@ export function loadNativeTimeline(
                     body: msg.mediaData?.xiaohongshuBody,
                     description: msg.mediaData?.xiaohongshuDescription,
                 });
-                else if (msg.mediaType === "theater_share") content = formatTheaterShareForPrompt({
-                    genreTitle: msg.mediaData?.theaterGenreTitle,
-                    title: msg.mediaData?.theaterTitle,
-                    summary: msg.mediaData?.theaterSummary,
-                });
                 else if (msg.mediaType === "location") content = `[位置:${msg.mediaData?.label || ""}]`;
             }
 
@@ -371,11 +366,6 @@ export function loadNativeTimeline(
                     title: msg.mediaData?.xiaohongshuTitle,
                     body: msg.mediaData?.xiaohongshuBody,
                     description: msg.mediaData?.xiaohongshuDescription,
-                });
-                else if (msg.mediaType === "theater_share") content = formatTheaterShareForPrompt({
-                    genreTitle: msg.mediaData?.theaterGenreTitle,
-                    title: msg.mediaData?.theaterTitle,
-                    summary: msg.mediaData?.theaterSummary,
                 });
                 else if (msg.mediaType === "media_file") {
                     const ft = msg.mediaData?.fileType;
