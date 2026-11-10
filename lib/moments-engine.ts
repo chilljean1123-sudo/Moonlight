@@ -329,6 +329,16 @@ async function triggerAIPost(characterId: string): Promise<void> {
                 .catch(err => console.warn("[Moments] Action dispatch failed:", err));
         }
 
+        // 模型把思维链漏在 [朋友圈] 块外时，块外的残留文本不能被当成第二条动态入库。
+        // 这一轮的动态已经由 [朋友圈] 动作派发创建，这里直接收尾，否则朋友圈会多出一条
+        // 内容为思维链/说明性前缀的动态。（动作内容为空时才继续走下面的解析兜底）
+        if (actions.some(action => action.type === "朋友圈" && action.content.trim())) {
+            if (postText.trim()) {
+                console.warn(`[Moments] SKIP trailing non-post text from ${character.name}:`, postText.slice(0, 80));
+            }
+            return;
+        }
+
         const parsed = parseMomentPostResponse(postText);
         if (!parsed) return;
 
